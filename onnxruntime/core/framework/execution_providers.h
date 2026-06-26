@@ -122,6 +122,15 @@ class ExecutionProviders {
 
   size_t NumProviders() const { return exec_providers_.size(); }
 
+  // Release all EP references. Used by ~InferenceSession for deterministic
+  // teardown before the implicit member-destruction phase.
+  void Clear() {
+    exec_providers_.clear();
+    exec_provider_ids_.clear();
+    exec_provider_options_.clear();
+    provider_idx_map_.clear();
+  }
+
   using const_iterator = typename std::vector<std::shared_ptr<IExecutionProvider>>::const_iterator;
   const_iterator begin() const noexcept { return exec_providers_.cbegin(); }
   const_iterator end() const noexcept { return exec_providers_.cend(); }

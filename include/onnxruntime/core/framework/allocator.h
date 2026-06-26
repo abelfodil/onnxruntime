@@ -374,4 +374,9 @@ class IArena : public IAllocator {
   static IArena* SafeArenaCast(IAllocator* allocator);
 };
 
+// Hint the system allocator to return freed memory to the OS.
+// Called after session destruction so that process RSS drops instead of
+// remaining trapped in the allocator's internal pools.
+void ReleaseFreedMemoryToOS();
+
 }  // namespace onnxruntime

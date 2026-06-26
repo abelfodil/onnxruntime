@@ -1609,6 +1609,9 @@ void addGlobalMethods(py::module& m) {
   m.def("get_default_session_options", &GetDefaultCPUSessionOptions, "Return a default session_options instance.");
   m.def("get_session_initializer", &SessionObjectInitializer::Get, "Return a default session object initializer.");
   m.def(
+      "release_freed_memory_to_os", []() { ReleaseFreedMemoryToOS(); },
+      "Hint the system allocator to return freed memory to the OS.");
+  m.def(
       "get_device", []() -> std::string { return BACKEND_DEVICE; },
       "Return the device used to compute the prediction (CPU, MKL, ...)");
   m.def(

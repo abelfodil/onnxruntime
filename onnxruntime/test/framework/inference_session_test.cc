@@ -182,6 +182,7 @@ class FuseExecutionProvider : public IExecutionProvider {
 namespace test {
 static constexpr const ORTCHAR_T* MODEL_URI = ORT_TSTR("testdata/mul_1.onnx");
 static constexpr const ORTCHAR_T* MODEL_URI_NO_OPSET = ORT_TSTR("testdata/mul_1.noopset.onnx");
+static constexpr const ORTCHAR_T* MODEL_URI_BIG_SIZE = ORT_TSTR("testdata/bart_tiny.onnx");
 // static const std::string MODEL_URI = "./testdata/squeezenet/model.onnx"; // TODO enable this after we've weights?
 
 void RunModel(InferenceSession& session_object,
@@ -3200,6 +3201,79 @@ TEST(InferenceSessionTests, SessionLoggerOutlivesEPsWithUserLoggingFunction) {
   ASSERT_TRUE(found_teardown_msg)
       << "Expected EP teardown log message not found via user_logging_function.";
 }
+
+TEST(InferenceSessionTests, ReleaseFreedMemoryToOSDoesNotCrash) {
+  ASSERT_NO_FATAL_FAILURE(ReleaseFreedMemoryToOS());
+}
+
+#if defined(__linux__) && !defined(__ANDROID__)
+// Regression test for https://github.com/microsoft/onnxruntime/issues/26831
+//
+// Repeatedly creating and destroying InferenceSessions must not cause RSS to
+// grow without bound. Without ReleaseFreedMemoryToOS() in ~InferenceSession,
+// freed heap pages remain trapped in glibc's per-thread malloc arenas and RSS
+// accumulates monotonically across cycles.
+//
+// This test intentionally does NOT call ReleaseFreedMemoryToOS() explicitly —
+// it relies solely on the destructor's internal call so that removing the fix
+// causes a failure.
+TEST(InferenceSessionTests, DestroyDoesNotAccumulateMemory) {
+  const auto get_rss_kb = []() -> int64_t {
+    std::ifstream f("/proc/self/status");
+    std::string line;
+    while (std::getline(f, line)) {
+      if (line.rfind("VmRSS:", 0) == 0) {
+        return std::stoll(line.substr(6));
+      }
+    }
+    return -1;
+  };
+
+  SessionOptions so;
+  so.enable_cpu_mem_arena = false;
+  so.session_logid = "InferenceSessionTests.DestroyDoesNotAccumulateMemory";
+
+  RunOptions run_options;
+  run_options.run_tag = "DestroyDoesNotAccumulateMemory";
+
+  // Warmup: page in shared libraries and trigger one-time allocations so they
+  // don't distort the plateau measurement.
+  {
+    InferenceSession session{so, GetEnvironment()};
+    ASSERT_STATUS_OK(session.Load(MODEL_URI));
+    ASSERT_STATUS_OK(session.Initialize());
+    RunModel(session, run_options);
+  }
+
+  constexpr int kNumCycles = 100;
+  std::vector<int64_t> posts;
+  posts.reserve(kNumCycles);
+
+  for (int i = 0; i < kNumCycles; ++i) {
+    {
+      InferenceSession session{so, GetEnvironment()};
+      ASSERT_STATUS_OK(session.Load(MODEL_URI_BIG_SIZE));
+      ASSERT_STATUS_OK(session.Initialize());
+      // Memory allocation happens during Load + Initialize (initializers, graph, kernels).
+      // RunModel() skipped as bert_toy_optimized.onnx has different input/output names.
+    }
+    posts.push_back(get_rss_kb());
+  }
+
+  // The second half of cycles must plateau, not accumulate.
+  auto half = posts.begin() + kNumCycles / 2;
+  int64_t min_post = *std::min_element(half, posts.end());
+  int64_t max_post = *std::max_element(half, posts.end());
+
+  // Without the fix RSS grows several MB per cycle; with the fix it is flat.
+  // The threshold is generous to avoid flakiness from system-level noise while
+  // still catching the regression if ReleaseFreedMemoryToOS is removed.
+  constexpr int64_t kMaxPlateauRangeKB = 32 * 1024;  // 32 MB
+  EXPECT_LT(max_post - min_post, kMaxPlateauRangeKB)
+      << "RSS grew " << (max_post - min_post) / 1024 << " MB across "
+      << kNumCycles / 2 << " cycles (expected plateau after warmup)";
+}
+#endif  // defined(__linux__) && !defined(__ANDROID__)
 
 }  // namespace test
 }  // namespace onnxruntime

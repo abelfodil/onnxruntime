@@ -279,7 +279,13 @@ struct PyInferenceSession {
 
   InferenceSession* GetSessionHandle() const { return sess_.get(); }
 
-  virtual ~PyInferenceSession() = default;
+  // Destroy the C++ session first, then release freed memory to the OS
+  // after all InferenceSession members (including value-type members freed
+  // by implicit destruction) have been released.
+  virtual ~PyInferenceSession() {
+    sess_.reset();
+    ReleaseFreedMemoryToOS();
+  }
 
  protected:
   PyInferenceSession(std::unique_ptr<InferenceSession> sess)

@@ -924,6 +924,16 @@ InferenceSession::~InferenceSession() {
 #if !defined(ORT_MINIMAL_BUILD) && defined(ORT_MEMORY_PROFILE)
   GetMemoryProfiler().GenerateMemoryProfile();
 #endif
+
+  // Explicitly release major members so freed memory can be returned to the OS
+  // via ReleaseFreedMemoryToOS. Order mirrors reverse-declaration destruction.
+  session_state_.reset();
+  model_.reset();
+  execution_providers_.Clear();
+  thread_pool_.reset();
+  inter_op_thread_pool_.reset();
+
+  ReleaseFreedMemoryToOS();
 }
 
 common::Status InferenceSession::RegisterExecutionProvider(const std::shared_ptr<IExecutionProvider>& p_exec_provider) {

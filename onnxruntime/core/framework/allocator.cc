@@ -17,6 +17,14 @@
 #include <mimalloc.h>
 #endif
 
+#if defined(__GLIBC__)
+#include <malloc.h>  // malloc_trim
+#endif
+
+#if defined(__linux__) && !defined(__ANDROID__)
+#include <dlfcn.h>  // dlsym
+#endif
+
 #include "core/framework/bfc_arena.h"
 
 using namespace onnxruntime;
@@ -192,6 +200,29 @@ void* AllocateBufferWithOptions(IAllocator& alloc, size_t size, bool use_reserve
 
 IArena* IArena::SafeArenaCast(IAllocator* allocator) {
   return allocator ? allocator->AsArena() : nullptr;
+}
+
+void ReleaseFreedMemoryToOS() {
+#if defined(USE_MIMALLOC)
+  mi_collect(true);
+#elif defined(__GLIBC__) || (defined(__linux__) && !defined(__ANDROID__))
+  // Resolve mi_collect dynamically to support LD_PRELOAD'd mimalloc.
+  static auto mi_collect_fn = []() -> void (*)(int) {
+#if defined(__linux__)
+    return reinterpret_cast<void (*)(int)>(dlsym(RTLD_DEFAULT, "mi_collect"));
+#else
+    return nullptr;
+#endif
+  }();
+
+  if (mi_collect_fn != nullptr) {
+    mi_collect_fn(/*force=*/1);
+    return;
+  }
+#if defined(__GLIBC__)
+  malloc_trim(0);
+#endif
+#endif
 }
 
 }  // namespace onnxruntime

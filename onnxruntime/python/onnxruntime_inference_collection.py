@@ -652,6 +652,31 @@ class InferenceSession(Session):
         self._provider_options = self._sess.get_provider_options()
         self._profiling_start_time_ns = self._sess.get_profiling_start_time_ns
 
+    def __del__(self) -> None:
+        # Release the C++ session and return freed memory to the OS.
+        try:
+            if hasattr(self, "_sess") and self._sess is not None:
+                for attr in (
+                    "_sess_options",
+                    "_inputs_meta",
+                    "_outputs_meta",
+                    "_overridable_initializers",
+                    "_input_meminfos",
+                    "_output_meminfos",
+                    "_input_epdevices",
+                    "_model_meta",
+                    "_providers",
+                    "_provider_options",
+                    "_profiling_start_time_ns",
+                ):
+                    if hasattr(self, attr):
+                        setattr(self, attr, None)
+                self._sess = None
+            if hasattr(C, "release_freed_memory_to_os"):
+                C.release_freed_memory_to_os()
+        except Exception:
+            pass
+
     def _reset_session(self, providers, provider_options) -> None:
         "release underlying session object."
         # meta data references session internal structures
