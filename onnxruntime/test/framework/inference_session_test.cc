@@ -3269,8 +3269,8 @@ TEST(InferenceSessionTests, DestroyDoesNotAccumulateMemory) {
   // Without the fix, RSS grows by ~size of the model per cycle (~28 MB for bart_tiny.onnx)
   // due to glibc's per-thread malloc arenas not releasing memory to the OS.
   // With the fix, RSS should remain flat across destroy cycles.
-  // We allow a threshold of 10 MB for system-level noise and allocator metadata.
-  constexpr int64_t kMaxRssDifferenceKB = 10 * 1024;  // 10 MB
+  // We allow a threshold of 32 KB for system-level noise and allocator metadata.
+  constexpr int64_t kMaxRssDifferenceKB = 32;  // 32 KB
   EXPECT_LE(rss_after_cycle2 - rss_after_cycle1, kMaxRssDifferenceKB)
       << "RSS grew " << (rss_after_cycle2 - rss_after_cycle1) / 1024 << " MB across destroy cycles "
       << "(expected flat RSS after memory is returned to OS. rss_after_warmup=" << rss_after_warmup

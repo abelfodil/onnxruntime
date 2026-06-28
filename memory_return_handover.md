@@ -33,8 +33,8 @@ The test was updated to use `bart_tiny.onnx` (28.7 MB) and simplified to compare
 
 **Key parameters:**
 - Model: `testdata/bart_tiny.onnx` (28,712,022 bytes)
-- `kMaxRssDifferenceKB = 10 * 1024` — 10 MB threshold per cycle difference
-- RSS measured via `/proc/self/status` (linux only)
+- `kMaxRssDifferenceKB = 32` — 32 KB threshold per cycle difference for system-level noise and allocator metadata
+- RSS measured via `/proc/self/status` → `VmRSS:` (linux only, process memory not total system memory)
 
 **Design Rationale:**
 
