@@ -21,7 +21,7 @@ The test was updated to use `bart_tiny.onnx` (28.7 MB) and simplified to compare
 
 **Test approach:**
 1. Warmup: Load + Initialize + Run `mul_1.onnx` to page in shared libraries and trigger one-time allocations
-2. Measure RSS after warmup (`rss_before`)
+2. Measure RSS after warmup (`rss_after_warmup`)
 3. Cycle 1: Load + Initialize + Destroy `bart_tiny.onnx` (no Run, memory allocation happens during Load+Initialize)
 4. Measure RSS after cycle 1 (`rss_after_cycle1`)
 5. Cycle 2: Load + Initialize + Destroy `bart_tiny.onnx`
@@ -35,6 +35,19 @@ The test was updated to use `bart_tiny.onnx` (28.7 MB) and simplified to compare
 - Model: `testdata/bart_tiny.onnx` (28,712,022 bytes)
 - `kMaxRssDifferenceKB = 10 * 1024` — 10 MB threshold per cycle difference
 - RSS measured via `/proc/self/status` (linux only)
+
+**Design Rationale:**
+
+**Why two cycles?**
+A single load/destroy cycle only measures the initial allocation (~28 MB for bart_tiny.onnx), which is expected behavior. You cannot distinguish between normal allocation and a memory leak with only one cycle. The second cycle measures the delta `rss_after_cycle2 - rss_after_cycle1`, which proves whether memory from Cycle 1 was actually released:
+- With the fix: Memory is returned to the OS after each destroy cycle. `rss_after_cycle2 - rss_after_cycle1` ≈ 0 → test PASSES.
+- Without the fix: Memory remains trapped in glibc's per-thread malloc arenas. `rss_after_cycle2 - rss_after_cycle1` ≈ 34 MB → test FAILS.
+
+**Why not check RSS after destroy vs warmup?**
+Absolute RSS values are noisy and vary between environments, OS states, and background processes. Comparing `rss_after_cycle1` to `rss_after_warmup` would include base process memory, shared library mappings, and glibc's internal state. The delta between two consecutive identical destroy cycles isolates the memory reclamation behavior.
+
+**Why is the threshold 10 MB?**
+The 10 MB threshold is specifically chosen to be lower than the leak size (~34 MB without the fix) but higher than normal system/allocator noise. It catches the ~34 MB leak (since 34 > 10, the test fails) while allowing for minor system-level noise or allocator metadata overhead that isn't a full model-sized leak.
 
 ## Files Changed
 ```

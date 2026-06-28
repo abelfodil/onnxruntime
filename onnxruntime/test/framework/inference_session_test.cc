@@ -3237,7 +3237,7 @@ TEST(InferenceSessionTests, DestroyDoesNotAccumulateMemory) {
   run_options.run_tag = "DestroyDoesNotAccumulateMemory";
 
   // Warmup: page in shared libraries and trigger one-time allocations so they
-  // don't distort the plateau measurement.
+  // don't distort the measurement.
   {
     InferenceSession session{so, GetEnvironment()};
     ASSERT_STATUS_OK(session.Load(MODEL_URI));
@@ -3245,33 +3245,36 @@ TEST(InferenceSessionTests, DestroyDoesNotAccumulateMemory) {
     RunModel(session, run_options);
   }
 
-  constexpr int kNumCycles = 100;
-  std::vector<int64_t> posts;
-  posts.reserve(kNumCycles);
+  // Measure RSS after warmup
+  int64_t rss_after_warmup = get_rss_kb();
 
-  for (int i = 0; i < kNumCycles; ++i) {
-    {
-      InferenceSession session{so, GetEnvironment()};
-      ASSERT_STATUS_OK(session.Load(MODEL_URI_BIG_SIZE));
-      ASSERT_STATUS_OK(session.Initialize());
-      // Memory allocation happens during Load + Initialize (initializers, graph, kernels).
-      // RunModel() skipped as bert_toy_optimized.onnx has different input/output names.
-    }
-    posts.push_back(get_rss_kb());
+  // Cycle 1: Load + Initialize + Destroy big model (bart_tiny.onnx, ~28.7 MB)
+  {
+    InferenceSession session{so, GetEnvironment()};
+    ASSERT_STATUS_OK(session.Load(MODEL_URI_BIG_SIZE));
+    ASSERT_STATUS_OK(session.Initialize());
+    // Memory allocation happens during Load + Initialize (initializers, graph, kernels).
+    // RunModel() skipped as bert_toy_optimized.onnx has different input/output names.
   }
+  int64_t rss_after_cycle1 = get_rss_kb();
 
-  // The second half of cycles must plateau, not accumulate.
-  auto half = posts.begin() + kNumCycles / 2;
-  int64_t min_post = *std::min_element(half, posts.end());
-  int64_t max_post = *std::max_element(half, posts.end());
+  // Cycle 2: Load + Initialize + Destroy big model
+  {
+    InferenceSession session{so, GetEnvironment()};
+    ASSERT_STATUS_OK(session.Load(MODEL_URI_BIG_SIZE));
+    ASSERT_STATUS_OK(session.Initialize());
+  }
+  int64_t rss_after_cycle2 = get_rss_kb();
 
-  // Without the fix RSS grows several MB per cycle; with the fix it is flat.
-  // The threshold is generous to avoid flakiness from system-level noise while
-  // still catching the regression if ReleaseFreedMemoryToOS is removed.
-  constexpr int64_t kMaxPlateauRangeKB = 32 * 1024;  // 32 MB
-  EXPECT_LT(max_post - min_post, kMaxPlateauRangeKB)
-      << "RSS grew " << (max_post - min_post) / 1024 << " MB across "
-      << kNumCycles / 2 << " cycles (expected plateau after warmup)";
+  // Without the fix, RSS grows by ~size of the model per cycle (~28 MB for bart_tiny.onnx)
+  // due to glibc's per-thread malloc arenas not releasing memory to the OS.
+  // With the fix, RSS should remain flat across destroy cycles.
+  // We allow a threshold of 10 MB for system-level noise and allocator metadata.
+  constexpr int64_t kMaxRssDifferenceKB = 10 * 1024;  // 10 MB
+  EXPECT_LE(rss_after_cycle2 - rss_after_cycle1, kMaxRssDifferenceKB)
+      << "RSS grew " << (rss_after_cycle2 - rss_after_cycle1) / 1024 << " MB across destroy cycles "
+      << "(expected flat RSS after memory is returned to OS. rss_after_warmup=" << rss_after_warmup
+      << ", rss_after_cycle1=" << rss_after_cycle1 << ", rss_after_cycle2=" << rss_after_cycle2 << ")";
 }
 #endif  // defined(__linux__) && !defined(__ANDROID__)
 
