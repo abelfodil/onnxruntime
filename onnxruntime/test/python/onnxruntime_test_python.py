@@ -2440,5 +2440,84 @@ class TestInferenceSession(unittest.TestCase):
             np.testing.assert_allclose(result_leaf_neg[1][0][1], expected_p1_leaf, atol=1e-5)
 
 
+class TestMemoryReclamation(unittest.TestCase):
+    def _get_rss_kb(self):
+        """Get process RSS in KB from /proc/self/status (Linux only)."""
+        if sys.platform != "linux":
+            return None
+
+        try:
+            with open("/proc/self/status", "r") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1])
+        except Exception:
+            pass
+        return None
+
+    def test_destroy_does_not_accumulate_memory_python_gc(self):
+        """Test that destroying InferenceSession via Python GC returns memory to OS."""
+        # Skip if not on Linux (VmRSS measurement) or release_freed_memory_to_os not available
+        if sys.platform != "linux":
+            self.skipTest("Memory reclamation test is Linux-only (VmRSS measurement)")
+
+        if not hasattr(onnxruntime.capi.onnxruntime_pybind11_state, "release_freed_memory_to_os"):
+            self.skipTest("release_freed_memory_to_os not available in this build")
+
+        # Get RSS helper
+        get_rss_kb = self._get_rss_kb
+
+        if get_rss_kb() is None:
+            self.skipTest("Could not read VmRSS from /proc/self/status")
+
+        # Warmup: load and run a small model to page in shared libraries
+        so = onnxrt.SessionOptions()
+        so.enable_cpu_mem_arena = False
+
+        with onnxrt.InferenceSession(get_name("mul_1.onnx"), sess_options=so, providers=["CPUExecutionProvider"]) as sess_warmup:
+            x = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+            input_name = sess_warmup.get_inputs()[0].name
+            sess_warmup.run([], {input_name: x})
+
+        # Measure RSS after warmup
+        rss_after_warmup = get_rss_kb()
+
+        # Cycle 1: Load + Initialize + Destroy big model (bart_tiny.onnx, ~28.7 MB)
+        sess1 = onnxrt.InferenceSession(get_name("bart_tiny.onnx"), sess_options=so, providers=["CPUExecutionProvider"])
+        del sess1
+        # Force garbage collection to ensure __del__ is called
+        import gc
+        gc.collect()
+
+        # Call release_freed_memory_to_os explicitly (this is what __del__ does)
+        onnxruntime.capi.onnxruntime_pybind11_state.release_freed_memory_to_os()
+
+        rss_after_cycle1 = get_rss_kb()
+
+        # Cycle 2: Load + Initialize + Destroy big model
+        sess2 = onnxrt.InferenceSession(get_name("bart_tiny.onnx"), sess_options=so, providers=["CPUExecutionProvider"])
+        del sess2
+        gc.collect()
+        onnxruntime.capi.onnxruntime_pybind11_state.release_freed_memory_to_os()
+
+        rss_after_cycle2 = get_rss_kb()
+
+        # Without the fix, RSS grows by ~size of the model per cycle (~28 MB for bart_tiny.onnx)
+        # due to glibc's per-thread malloc arenas not releasing memory to the OS.
+        # With the fix, RSS should remain flat across destroy cycles.
+        # We allow a threshold of 32 KB for system-level noise and allocator metadata.
+        k_max_rss_difference_kb = 32  # 32 KB
+
+        diff = rss_after_cycle2 - rss_after_cycle1
+        self.assertLessEqual(
+            diff,
+            k_max_rss_difference_kb,
+            f"RSS grew {diff / 1024:.2f} MB across destroy cycles "
+            f"(expected flat RSS after memory is returned to OS. "
+            f"rss_after_warmup={rss_after_warmup}, rss_after_cycle1={rss_after_cycle1}, "
+            f"rss_after_cycle2={rss_after_cycle2})",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

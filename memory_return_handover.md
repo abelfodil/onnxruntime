@@ -17,9 +17,9 @@ Make `~InferenceSession()` return freed memory to the OS so RSS doesn't accumula
 
 ## Test Implementation (Completed)
 
-The test was updated to use `bart_tiny.onnx` (28.7 MB) and simplified to compare RSS across consecutive cycles rather than checking a plateau over many cycles:
+Unit tests exist in both C++ and Python to verify memory reclamation:
 
-**Test approach:**
+**C++ Test (`onnxruntime/test/framework/inference_session_test.cc:DestroyDoesNotAccumulateMemory`):**
 1. Warmup: Load + Initialize + Run `mul_1.onnx` to page in shared libraries and trigger one-time allocations
 2. Measure RSS after warmup (`rss_after_warmup`)
 3. Cycle 1: Load + Initialize + Destroy `bart_tiny.onnx` (no Run, memory allocation happens during Load+Initialize)
@@ -27,9 +27,13 @@ The test was updated to use `bart_tiny.onnx` (28.7 MB) and simplified to compare
 5. Cycle 2: Load + Initialize + Destroy `bart_tiny.onnx`
 6. Measure RSS after cycle 2 (`rss_after_cycle2`)
 
+**Python Test (`onnxruntime/test/python/onnxruntime_test_python.py:TestMemoryReclamation.test_destroy_does_not_accumulate_memory_python_gc`):**
+- Tests Python GC flow: `InferenceSession.__del__` drops metadata refs, sets `_sess = None`, and calls `C.release_freed_memory_to_os()`
+- Follows the same 2-cycle approach with 32 KB threshold
+
 **Verification:**
 - With fix re-enabled: Test PASSES (RSS is flat across destroy cycles)
-- Without fix (`ReleaseFreedMemoryToOS()` commented out): Test FAILS (RSS grew 34 MB across cycles)
+- Without fix (`ReleaseFreedMemoryToOS()` commented out): Test FAILS (RSS grew ~34 MB across cycles)
 
 **Key parameters:**
 - Model: `testdata/bart_tiny.onnx` (28,712,022 bytes)
@@ -46,8 +50,8 @@ A single load/destroy cycle only measures the initial allocation (~28 MB for bar
 **Why not check RSS after destroy vs warmup?**
 Absolute RSS values are noisy and vary between environments, OS states, and background processes. Comparing `rss_after_cycle1` to `rss_after_warmup` would include base process memory, shared library mappings, and glibc's internal state. The delta between two consecutive identical destroy cycles isolates the memory reclamation behavior.
 
-**Why is the threshold 10 MB?**
-The 10 MB threshold is specifically chosen to be lower than the leak size (~34 MB without the fix) but higher than normal system/allocator noise. It catches the ~34 MB leak (since 34 > 10, the test fails) while allowing for minor system-level noise or allocator metadata overhead that isn't a full model-sized leak.
+**Why is the threshold 32 KB?**
+The 32 KB threshold is specifically chosen to be lower than the leak size (~34 MB without the fix) but higher than normal system/allocator noise. It catches the ~34 MB leak (since 34 MB > 32 KB, the test fails) while allowing for minor system-level noise or allocator metadata overhead that isn't a full model-sized leak.
 
 ## Files Changed
 ```
