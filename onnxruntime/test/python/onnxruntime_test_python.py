@@ -2505,8 +2505,8 @@ class TestMemoryReclamation(unittest.TestCase):
         # Without the fix, RSS grows by ~size of the model per cycle (~28 MB for bart_tiny.onnx)
         # due to glibc's per-thread malloc arenas not releasing memory to the OS.
         # With the fix, RSS should remain flat across destroy cycles.
-        # We allow a threshold of 32 KB for system-level noise and allocator metadata.
-        k_max_rss_difference_kb = 32  # 32 KB
+        # We allow a threshold of 128 KB for system-level noise and allocator metadata.
+        k_max_rss_difference_kb = 128  # 128 KB
 
         diff = rss_after_cycle2 - rss_after_cycle1
         self.assertLessEqual(

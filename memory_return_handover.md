@@ -37,7 +37,7 @@ Unit tests exist in both C++ and Python to verify memory reclamation:
 
 **Key parameters:**
 - Model: `testdata/bart_tiny.onnx` (28,712,022 bytes)
-- `kMaxRssDifferenceKB = 32` — 32 KB threshold per cycle difference for system-level noise and allocator metadata
+- `kMaxRssDifferenceKB = 128` — 128 KB threshold per cycle difference for system-level noise and allocator metadata
 - RSS measured via `/proc/self/status` → `VmRSS:` (linux only, process memory not total system memory)
 
 **Design Rationale:**
@@ -50,8 +50,8 @@ A single load/destroy cycle only measures the initial allocation (~28 MB for bar
 **Why not check RSS after destroy vs warmup?**
 Absolute RSS values are noisy and vary between environments, OS states, and background processes. Comparing `rss_after_cycle1` to `rss_after_warmup` would include base process memory, shared library mappings, and glibc's internal state. The delta between two consecutive identical destroy cycles isolates the memory reclamation behavior.
 
-**Why is the threshold 32 KB?**
-The 32 KB threshold is specifically chosen to be lower than the leak size (~34 MB without the fix) but higher than normal system/allocator noise. It catches the ~34 MB leak (since 34 MB > 32 KB, the test fails) while allowing for minor system-level noise or allocator metadata overhead that isn't a full model-sized leak.
+**Why is the threshold 128 KB?**
+The 128 KB threshold is specifically chosen to be lower than the leak size (~34 MB without the fix) but higher than normal system/allocator noise (which can be ~72 KB due to allocator metadata or internal state changes). It catches the ~34 MB leak (since 34 MB > 128 KB, the test fails) while allowing for minor system-level noise or allocator metadata overhead that isn't a full model-sized leak.
 
 ## Files Changed
 ```
